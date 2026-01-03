@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PharmaFlow - Portail Commandes Interne</title>
+  <meta name="description" content="MVP PWA pour gestion interne des demandes de médicaments en pharmacie." />
+
+  <!-- PWA Manifest (inlined, will be exposed via Blob URL in JS) -->
+  <meta id="pwa-manifest-placeholder" />
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+  <!-- Vue 3 CDN -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+
+  <style>
+    html, body {
+      height: 100%;
+      background-color: #020617; /* slate-950 */
+    }
+
+    /* Simple page transition */
+    .fade-enter-active, .fade-leave-active {
+      transition: opacity 0.18s ease;
+    }
+    .fade-enter-from, .fade-leave-to {
+      opacity: 0;
+    }
+
+    /* Basic PWA install banner style */
+    .pwa-banner {
+      box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.7);
+    }
+
+    /* Hide scrollbar on nav tabs */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    /* Mobile-friendly table alternative */
+    @media (max-width: 640px) {
+      .mobile-card {
+        display: block;
+      }
+      .desktop-table {
+        display: none;
+      }
+    }
+    @media (min-width: 641px) {
+      .mobile-card {
+        display: none;
+      }
+      .desktop-table {
+        display: table;
+      }
+    }
+
+    /* Touch-friendly buttons on mobile */
+    @media (max-width: 640px) {
+      button, a.btn {
+        min-height: 44px;
+        min-width: 44px;
+      }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+  <div id="app" class="min-h-screen flex flex-col">
+    <!-- Top App Bar -->
+    <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20">
+      <div class="max-w-6xl mx-auto px-3 sm:px-4 py-2 sm:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3">
+        <div class="flex items-center gap-2 w-full sm:w-auto">
+          <div class="h-8 w-8 sm:h-9 sm:w-9 rounded-xl bg-emerald-500 flex items-center justify-center text-slate-950 font-black text-base sm:text-lg flex-shrink-0">Rx</div>
+          <div class="flex-1 sm:flex-initial">
+            <div class="text-sm sm:text-base font-semibold tracking-tight">PharmaFlow</div>
+            <div class="text-[10px] sm:text-[11px] text-slate-400">Portail interne des demandes</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 text-xs text-slate-300 w-full sm:w-auto">
+          <span class="hidden sm:inline">Pharmacie :</span>
+          <select v-model="state.currentPharmacyId" class="bg-slate-900/80 border border-slate-700 text-xs rounded-lg px-2 py-1.5 sm:py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500 flex-1 sm:flex-initial">
+            <option v-for="p in pharmacies" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+          <span class="hidden md:inline-block ml-2 px-2 py-0.5 rounded-full bg-slate-800 text-[10px] font-medium" v-if="currentPharmacy">
+            {{ currentPharmacy.managers[0] }} & {{ currentPharmacy.managers[1] }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="max-w-6xl mx-auto px-2 pb-2 flex gap-1 text-xs overflow-x-auto no-scrollbar snap-x snap-mandatory">
+        <button
+          v-for="item in navItems"
+          :key="item.id"
+          @click="state.currentView = item.id"
+          class="relative flex-shrink-0 min-w-[120px] sm:min-w-0 sm:flex-1 lg:flex-none px-3 py-2.5 sm:py-2 rounded-lg flex items-center justify-center gap-1.5 sm:gap-1 whitespace-nowrap border text-[11px] sm:text-[10px] lg:text-[11px] snap-start"
+          :class="state.currentView === item.id
+            ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm font-medium'
+            : 'bg-slate-900/70 text-slate-300 border-slate-800 hover:border-slate-600'">
+          <span class="material-symbols-outlined text-base sm:text-[15px] lg:text-base" v-if="item.icon">{{ item.icon }}</span>
+          <span class="hidden xs:inline">{{ item.label }}</span>
+          <span class="xs:hidden">{{ item.label.split(' ')[0] }}</span>
+          <span v-if="item.id === 'notifications' && unreadCount > 0" class="ml-1 inline-flex items-center justify-center rounded-full bg-emerald-400 text-slate-950 text-[9px] sm:text-[10px] min-w-[1rem] sm:min-w-[1.1rem] h-[1rem] sm:h-[1.1rem] px-1">
+            {{ unreadCount }}
+          </span>
+        </button>
+      </nav>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1">
+      <div class="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
+
+        <!-- Status strip -->
+        <div class="mb-3 sm:mb-4 flex flex-wrap items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] text-slate-300">
+          <span class="px-2 py-1 rounded-full border border-emerald-500/60 bg-emerald-500/10 text-emerald-300 flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="hidden xs:inline">Mode démo (données simulées)</span>
+            <span class="xs:hidden">Démo</span>
+          </span>
+          <span class="px-2 py-1 rounded-full border border-slate-700 bg-slate-900/60 flex items-center gap-1">
+            <span class="material-symbols-outlined text-[12px] sm:text-[14px]">sync_saved_locally</span>
+            <span v-if="pwa.online" class="hidden xs:inline">Connecté</span>
+            <span v-if="pwa.online" class="xs:hidden">En ligne</span>
+            <span v-else>Hors-ligne</span>
+          </span>
+          <span v-if="pwa.installAvailable" class="px-2 py-1 rounded-full border border-indigo-500/60 bg-indigo-500/5 text-indigo-200 flex items-center gap-1 cursor-pointer hover:bg-indigo-500/10" @click="installPWA">
+            <span class="material-symbols-outlined text-[12px] sm:text-[14px]">download</span>
+            <span class="hidden sm:inline">Installer l'application</span>
+            <span class="sm:hidden">Installer</span>
+          </span>
+        </div>
+
+        <!-- Views -->
+        <transition name="fade" mode="out-in">
+          <section :key="state.currentView">
+            <!-- Dashboard -->
+            <div v-if="state.currentView === 'dashboard'" class="space-y-3 sm:space-y-4">
+              <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                <div class="lg:col-span-2 space-y-3">
+                  <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3 sm:p-4">
+                    <div class="flex flex-col sm:flex-row items-start justify-between gap-2 sm:gap-3 mb-3">
+                      <div>
+                        <h2 class="text-sm sm:text-base font-semibold mb-1">Vue d'ensemble</h2>
+                        <p class="text-[11px] sm:text-xs text-slate-400">Suivi de vos demandes de médicaments et dons.</p>
+                      </div>
+                      <button @click="goToNewRequest" class="w-full sm:w-auto inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-500 text-slate-950 text-xs font-medium px-3 py-2 sm:py-1.5 shadow-sm hover:bg-emerald-400 whitespace-nowrap">
+                        <span class="material-symbols-outlined text-base">add</span>
+                        <span class="hidden xs:inline">Nouvelle demande</span>
+                        <span class="xs:hidden">Nouvelle</span>
+                      </button>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-2 text-xs">
+                      <div class="rounded-lg bg-slate-950/80 border border-slate-800 px-2 sm:px-3 py-2.5">
+                        <div class="text-[10px] sm:text-[11px] text-slate-400 mb-1">En attente</div>
+                        <div class="text-base sm:text-lg font-semibold">{{ stats.pending }}</div>
+                      </div>
+                      <div class="rounded-lg bg-slate-950/80 border border-slate-800 px-2 sm:px-3 py-2.5">
+                        <div class="text-[10px] sm:text-[11px] text-slate-400 mb-1">Validées</div>
+                        <div class="text-base sm:text-lg font-semibold text-emerald-300">{{ stats.approved }}</div>
+                      </div>
+                      <div class="rounded-lg bg-slate-950/80 border border-slate-800 px-2 sm:px-3 py-2.5">
+                        <div class="text-[10px] sm:text-[11px] text-slate-400 mb-1">Refusées</div>
+                        <div class="text-base sm:text-lg font-semibold text-rose-300">{{ stats.rejected }}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Recent Requests Table -->
+                  <div class="bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden">
+                    <div class="px-3 sm:px-4 py-2.5 border-b border-slate-800 flex flex-col xs:flex-row items-start xs:items-center justify-between gap-2">
+                      <h3 class="text-xs sm:text-sm font-semibold">Dernières demandes</h3>
+                      <div class="flex items-center gap-1 text-[10px] sm:text-[11px] text-slate-400 w-full xs:w-auto">
+                        <span class="hidden sm:inline">Filtrer :</span>
+                        <select v-model="filters.status" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-[10px] sm:text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-500 flex-1 xs:flex-initial">
+                          <option value="all">Toutes</option>
+                          <option value="pending">En attente</option>
+                          <option value="approved">Validées</option>
+                          <option value="rejected">Refusées</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <!-- Desktop Table -->
+                    <div class="desktop-table overflow-x-auto text-[11px]">
+                      <table class="min-w-full divide-y divide-slate-800">
+                        <thead class="bg-slate-950/70">
+                          <tr>
+                            <th class="px-3 py-2 text-left font-medium text-slate-400">Référence</th>
+                            <th class="px-3 py-2 text-left font-medium text-slate-400">Médicament</th>
+                            <th class="px-3 py-2 text-left font-medium text-slate-400">Quantité</th>
+                            <th class="px-3 py-2 text-left font-medium text-slate-400">Statut</th>
+                            <th class="px-3 py-2 text-left font-medium text-slate-400">Maj</th>
+                            <th class="px-3 py-2 text-right font-medium text-slate-400">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800">
+                          <tr v-for="req in filteredRecentRequests" :key="req.id" class="hover:bg-slate-900">
+                            <td class="px-3 py-2 align-top">
+                              <div class="font-medium text-[11px]">{{ req.reference }}</div>
+                              <div class="text-[10px] text-slate-500">{{ formatChannel(req.channel) }}</div>
+                            </td>
+                            <td class="px-3 py-2 align-top">
+                              <div class="truncate max-w-[140px]">{{ req.medicineName }}</div>
+                              <div class="text-[10px] text-slate-500">{{ req.presentation }}</div>
+                            </td>
+                            <td class="px-3 py-2 align-top">
+                              {{ req.quantity }} {{ req.unit }}
+                            </td>
+                            <td class="px-3 py-2 align-top">
+                              <span :class="statusPillClass(req.status)">
+                                {{ formatStatus(req.status) }}
+                              </span>
+                            </td>
+                            <td class="px-3 py-2 align-top text-slate-400">
+                              {{ formatDate(req.updatedAt) }}
+                            </td>
+                            <td class="px-3 py-2 align-top text-right">
+                              <button @click="openForEdit(req)" class="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-700 bg-slate-950/70 hover:border-emerald-500 text-[10px]">
+                                <span class="material-symbols-outlined text-[14px]">edit</span>
+                                Modifier
+                              </button>
+                            </td>
+                          </tr>
+                          <tr v-if="filteredRecentRequests.length === 0">
+                            <td colspan="6" class="px-3 py-6 text-center text-slate-500 text-xs">Aucune demande trouvée pour ce filtre.</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <!-- Mobile Cards -->
+                    <div class="mobile-card divide-y divide-slate-800">
+                      <div v-for="req in filteredRecentRequests" :key="req.id" class="p-3 hover:bg-slate-900/50">
+                        <div class="flex items-start justify-between gap-2 mb-2">
+                          <div>
+                            <div class="font-medium text-xs">{{ req.reference }}</div>
+                            <div class="text-[10px] text-slate-500">{{ formatChannel(req.channel) }}</div>
+                          </div>
+                          <span :class="statusPillClass(req.status)">
+                            {{ formatStatus(req.status) }}
+                          </span>
+                        </div>
+                        <div class="mb-2">
+                          <div class="text-xs text-slate-100 mb-0.5">{{ req.medicineName }}</div>
+                          <div class="text-[10px] text-slate-400">{{ req.presentation }}</div>
+                          <div class="text-[11px] text-slate-300 mt-1">
+                            <span class="font-medium">{{ req.quantity }}</span> {{ req.unit }}
+                          </div>
+                        </div>
+                        <div class="flex items-center justify-between gap-2">
+                          <div class="text-[10px] text-slate-500">{{ formatDate(req.updatedAt) }}</div>
+                          <button @click="openForEdit(req)" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-slate-700 bg-slate-950/70 hover:border-emerald-500 text-[10px]">
+                            <span class="material-symbols-outlined text-[14px]">edit</span>
+                            Modifier
+                          </button>
+                        </div>
+                      </div>
+                      <div v-if="filteredRecentRequests.length === 0" class="p-6 text-center text-slate-500 text-xs">
+                        Aucune demande trouvée pour ce filtre.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Right column: Notifications preview + timeline mini -->
+                <div class="space-y-3">
+                  <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
+                    <div class="flex items-center justify-between mb-2">
+                      <h3 class="text-xs sm:text-sm font-semibold">Notifications</h3>
+                      <button @click="state.currentView = 'notifications'" class="text-[10px] sm:text-[11px] text-emerald-300 hover:text-emerald-200">Tout voir</button>
+                    </div>
+                    <ul class="space-y-2 max-h-48 sm:max-h-56 overflow-y-auto text-[10px] sm:text-[11px]">
+                      <li v-for="n in notifications.slice(0,4)" :key="n.id" class="flex gap-2">
+                        <div class="mt-[3px] flex-shrink-0">
+                          <span class="w-1.5 h-1.5 rounded-full block" :class="n.read ? 'bg-slate-600' : 'bg-emerald-400'"></span>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                          <div class="flex items-start justify-between gap-2">
+                            <span class="font-medium truncate" :class="n.read ? 'text-slate-300' : 'text-slate-100'">{{ n.title }}</span>
+                            <span class="text-[9px] sm:text-[10px] text-slate-500 flex-shrink-0">{{ timeAgo(n.date) }}</span>
+                          </div>
+                          <div class="text-slate-400 line-clamp-2">{{ n.body }}</div>
+                        </div>
+                      </li>
+                      <li v-if="notifications.length === 0" class="text-slate-500 text-center py-4 text-xs">Aucune notification pour le moment.</li>
+                    </ul>
+                  </div>
+
+                  <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
+                    <div class="flex items-center justify-between mb-2">
+                      <h3 class="text-xs sm:text-sm font-semibold">Activité récente</h3>
+                      <button @click="state.currentView = 'history'" class="text-[10px] sm:text-[11px] text-emerald-300 hover:text-emerald-200 whitespace-nowrap">Voir historique</button>
+                    </div>
+                    <div class="relative ml-3 border-l border-slate-700/70 pl-3 sm:pl-4 space-y-3 max-h-48 sm:max-h-56 overflow-y-auto text-[10px] sm:text-[11px]">
+                      <div v-for="item in timelinePreview" :key="item.id" class="relative">
+                        <div class="absolute -left-[0.6rem] sm:-left-[0.65rem] top-1 w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full border border-slate-900" :class="timelineDotClass(item.type)"></div>
+                        <div class="text-[9px] sm:text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">{{ formatTimelineType(item.type) }}</div>
+                        <div class="text-[11px] sm:text-xs text-slate-100 line-clamp-2">{{ item.title }}</div>
+                        <div class="text-[9px] sm:text-[10px] text-slate-500">{{ timeAgo(item.date) }}</div>
+                      </div>
+                      <div v-if="timelinePreview.length === 0" class="text-slate-500 text-center py-3 text-xs">Aucun événement enregistré.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Request Form -->
+            <div v-else-if="state.currentView === 'request'" class="max-w-2xl mx-auto">
+              <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3 sm:p-4 space-y-3 sm:space-y-4">
+                <div class="flex flex-col sm:flex-row items-start justify-between gap-2">
+                  <div>
+                    <h2 class="text-sm sm:text-base font-semibold mb-1">
+                      {{ state.editingRequest ? 'Modifier une demande' : 'Nouvelle demande de médicament' }}
+                    </h2>
+                    <p class="text-[11px] sm:text-xs text-slate-400">Les demandes sont envoyées aux deux responsables pour validation.</p>
+                  </div>
+                  <button @click="resetForm" class="text-[10px] sm:text-[11px] text-slate-400 hover:text-slate-200">Réinitialiser</button>
+                </div>
+
+                <form @submit.prevent="submitRequest" class="space-y-3 text-xs">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label class="block mb-1.5 text-[11px] sm:text-xs text-slate-300 font-medium">Médicament *</label>
+                      <input v-model="form.medicineName" type="text" required placeholder="Nom commercial ou DCI" class="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2.5 sm:py-2 text-xs focus:outline-none focus:ring-2 sm:focus:ring-1 focus:ring-emerald-500" />
+                    </div>
+                    <div>
+                      <label class="block mb-1.5 text-[11px] sm:text-xs text-slate-300 font-medium">Présentation</label>
+                      <input v-model="form.presentation" type="text" placeholder="Ex : 500 mg, boîte de 30" class="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2.5 sm:py-2 text-xs focus:outline-none focus:ring-2 sm:focus:ring-1 focus:ring-emerald-500" />
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label class="block mb-1.5 text-[11px] sm:text-xs text-slate-300 font-medium">Quantité *</label>
+                      <input v-model.number="form.quantity" type="number" min="1" required class="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2.5 sm:py-2 text-xs focus:outline-none focus:ring-2 sm:focus:ring-1 focus:ring-emerald-500" />
+                    </div>
+                    <div>
+                      <label class="block mb-1.5 text-[11px] sm:text-xs text-slate-300 font-medium">Unité</label>
+                      <select v-model="form.unit" class="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2.5 sm:py-2 text-xs focus:outline-none focus:ring-2 sm:focus:ring-1 focus:ring-emerald-500">
+                        <option value="boites">Boîtes</option>
+                        <option value="flacons">Flacons</option>
+                        <option value="unités">Unités</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block mb-1.5 text-[11px] sm:text-xs text-slate-300 font-medium">Priorité</label>
+                      <select v-model="form.priority" class="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2.5 sm:py-2 text-xs focus:outline-none focus:ring-2 sm:focus:ring-1 focus:ring-emerald-500">
+                        <option value="standard">Standard</option>
+                        <option value="haute">Haute</option>
+                        <option value="critique">Critique</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label class="block mb-1.5 text-[11px] sm:text-xs text-slate-300 font-medium">Canal de soumission</label>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] sm:text-[11px]">
+                      <label class="flex items-center gap-2 rounded-lg border px-3 py-2.5 sm:py-2 cursor-pointer transition-colors" :class="form.channel === 'portal' ? 'border-emerald-500 bg-emerald-500/5' : 'border-slate-700 bg-slate-950/60 hover:border-slate-600'">
+                        <input type="radio" value="portal" v-model="form.channel" class="text-emerald-500 flex-shrink-0" />
+                        <div class="min-w-0">
+                          <div class="font-medium">Portail</div>
+                          <div class="text-[9px] sm:text-[10px] text-slate-400">Soumission directe</div>
+                        </div>
+                      </label>
+                      <label class="flex items-center gap-2 rounded-lg border px-3 py-2.5 sm:py-2 cursor-pointer transition-colors" :class="form.channel === 'email' ? 'border-emerald-500 bg-emerald-500/5' : 'border-slate-700 bg-slate-950/60 hover:border-slate-600'">
+                        <input type="radio" value="email" v-model="form.channel" class="text-emerald-500 flex-shrink-0" />
+                        <div class="min-w-0">
+                          <div class="font-medium">Email</div>
+                          <div class="text-[9px] sm:text-[10px] text-slate-400">Via email</div>
+                        </div>
+                      </label>
+                      <label class="flex items-center gap-2 rounded-lg border px-3 py-2.5 sm:py-2 cursor-pointer transition-colors" :class="form.channel === 'phone' ? 'border-emerald-500 bg-emerald-500/5' : 'border-slate-700 bg-slate-950/60 hover:border-slate-600'">
+                        <input type="radio" value="phone" v-model="form.channel" class="text-emerald-500 flex-shrink-0" />
+                        <div class="min-w-0">
+                          <div class="font-medium">Téléphone</div>
+                          <div class="text-[9px] sm:text-[10px] text-slate-400">Appel reçu</div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label class="block mb-1.5 text-[11px] sm:text-xs text-slate-300 font-medium">Motif médical / indication *</label>
+                    <textarea v-model="form.justification" required rows="4" class="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2.5 sm:py-2 text-xs focus:outline-none focus:ring-2 sm:focus:ring-1 focus:ring-emerald-500 resize-none" placeholder="Contexte clinique, population concernée, urgence..."></textarea>
+                  </div>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label class="block mb-1.5 text-[11px] sm:text-xs text-slate-300 font-medium">Type de flux</label>
+                      <select v-model="form.flowType" class="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2.5 sm:py-2 text-xs focus:outline-none focus:ring-2 sm:focus:ring-1 focus:ring-emerald-500">
+                        <option value="request">Demande d'approvisionnement</option>
+                        <option value="donation">Don sortant</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block mb-1.5 text-[11px] sm:text-xs text-slate-300 font-medium">Commentaires internes</label>
+                      <input v-model="form.internalNotes" type="text" placeholder="Optionnel" class="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2.5 sm:py-2 text-xs focus:outline-none focus:ring-2 sm:focus:ring-1 focus:ring-emerald-500" />
+                    </div>
+                  </div>
+
+                  <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-3 border-t border-slate-800 mt-2">
+                    <div class="text-[10px] sm:text-[11px] text-slate-400">
+                      Assignée à :
+                      <span v-if="currentPharmacy" class="font-medium text-slate-200">{{ currentPharmacy.managers[0] }} & {{ currentPharmacy.managers[1] }}</span>
+                      <span v-else class="text-slate-500">Sélectionnez une pharmacie</span>
+                    </div>
+                    <div class="flex items-center gap-2 w-full sm:w-auto">
+                      <button type="button" @click="goBack" class="flex-1 sm:flex-initial px-3 py-2 sm:py-1.5 rounded-lg border border-slate-700 bg-slate-950/70 text-[11px] hover:border-slate-500">Annuler</button>
+                      <button type="submit" class="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 px-4 py-2 sm:py-1.5 rounded-lg bg-emerald-500 text-slate-950 text-[11px] font-semibold shadow-sm hover:bg-emerald-400">
+                        <span class="material-symbols-outlined text-[16px]">send</span>
+                        <span class="hidden xs:inline">{{ state.editingRequest ? 'Enregistrer' : 'Soumettre' }}</span>
+                        <span class="xs:hidden">{{ state.editingRequest ? 'Sauver' : 'Envoyer' }}</span>
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <!-- History -->
+            <div v-else-if="state.currentView === 'history'" class="grid grid-cols-1 lg:grid-cols-[1.5fr,1fr] gap-3 sm:gap-4">
+              <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3 sm:p-4">
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3 mb-3">
+                  <div>
+                    <h2 class="text-sm sm:text-base font-semibold mb-1">Historique des demandes</h2>
+                    <p class="text-[11px] sm:text-xs text-slate-400">Timeline détaillée des demandes et dons.</p>
+                  </div>
+                  <select v-model="filters.historyRange" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-[10px] sm:text-[11px] focus:outline-none focus:ring-1 focus:ring-emerald-500 w-full sm:w-auto">
+                    <option value="30">30 derniers jours</option>
+                    <option value="90">3 derniers mois</option>
+                    <option value="365">12 derniers mois</option>
+                    <option value="all">Tout</option>
+                  </select>
+                </div>
+
+                <div class="relative ml-2 sm:ml-3 border-l border-slate-700/80 pl-3 sm:pl-4 space-y-3 sm:space-y-4 max-h-[400px] sm:max-h-[480px] overflow-y-auto text-[10px] sm:text-[11px]">
+                  <div v-for="item in timeline" :key="item.id" class="relative">
+                    <div class="absolute -left-[0.6rem] sm:-left-[0.65rem] top-1 w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full border border-slate-900" :class="timelineDotClass(item.type)"></div>
+                    <div class="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-0.5">
+                      <div class="text-[9px] sm:text-[10px] uppercase tracking-wide text-slate-500">{{ formatTimelineType(item.type) }}</div>
+                      <span class="px-1.5 py-0.5 rounded-full text-[9px] sm:text-[10px] border" :class="statusPillClass(item.status)">
+                        {{ formatStatus(item.status) }}
+                      </span>
+                      <span class="text-[9px] sm:text-[10px] text-slate-500">{{ formatDate(item.date) }}</span>
+                    </div>
+                    <div class="text-[11px] sm:text-xs text-slate-100 mb-0.5 line-clamp-2">{{ item.title }}</div>
+                    <div class="text-[10px] sm:text-[11px] text-slate-400 mb-1 line-clamp-2">{{ item.subtitle }}</div>
+                    <button @click="openById(item.requestId)" class="inline-flex items-center gap-1 text-[10px] sm:text-[11px] text-emerald-300 hover:text-emerald-200 py-1">
+                      <span class="material-symbols-outlined text-[13px] sm:text-[14px]">visibility</span>
+                      Voir la demande
+                    </button>
+                  </div>
+                  <div v-if="timeline.length === 0" class="text-slate-500 text-center py-6 text-xs">Aucun événement dans la période sélectionnée.</div>
+                </div>
+              </div>
+
+              <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3 sm:p-4 space-y-3 text-xs h-fit">
+                <h3 class="text-sm sm:text-base font-semibold">Résumé par statut</h3>
+                <div class="space-y-2">
+                  <div class="flex items-center justify-between p-2 rounded-lg bg-slate-950/50">
+                    <span class="text-slate-300 text-[11px] sm:text-xs">En attente</span>
+                    <span class="font-semibold text-sm sm:text-base">{{ stats.pending }}</span>
+                  </div>
+                  <div class="flex items-center justify-between p-2 rounded-lg bg-slate-950/50">
+                    <span class="text-slate-300 text-[11px] sm:text-xs">Validées</span>
+                    <span class="font-semibold text-emerald-300 text-sm sm:text-base">{{ stats.approved }}</span>
+                  </div>
+                  <div class="flex items-center justify-between p-2 rounded-lg bg-slate-950/50">
+                    <span class="text-slate-300 text-[11px] sm:text-xs">Refusées</span>
+                    <span class="font-semibold text-rose-300 text-sm sm:text-base">{{ stats.rejected }}</span>
+                  </div>
+                </div>
+
+                <div class="pt-3 border-t border-slate-800">
+                  <h4 class="text-xs sm:text-sm font-semibold mb-2">Rappels workflow</h4>
+                  <ul class="list-disc list-inside text-[10px] sm:text-[11px] text-slate-400 space-y-1">
+                    <li>Deux responsables valident chaque demande.</li>
+                    <li>Les demandes validées restent éditables jusqu'à expédition.</li>
+                    <li>Les changements majeurs re-déclenchent une notification aux managers.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <!-- Notifications -->
+            <div v-else-if="state.currentView === 'notifications'" class="max-w-2xl mx-auto">
+              <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3 sm:p-4">
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-3">
+                  <div>
+                    <h2 class="text-sm sm:text-base font-semibold mb-1">Notifications</h2>
+                    <p class="text-[11px] sm:text-xs text-slate-400">Push simulés aux responsables et au personnel.</p>
+                  </div>
+                  <button v-if="unreadCount > 0" @click="markAllRead" class="text-[10px] sm:text-[11px] text-emerald-300 hover:text-emerald-200 whitespace-nowrap">Tout marquer comme lu</button>
+                </div>
+
+                <div class="space-y-2 sm:space-y-3 max-h-[450px] sm:max-h-[480px] overflow-y-auto text-xs">
+                  <div v-for="n in notifications" :key="n.id" class="rounded-lg border px-3 py-2.5 sm:py-2 flex gap-2 transition-colors" :class="n.read ? 'border-slate-700 bg-slate-950/70' : 'border-emerald-600/60 bg-emerald-500/5'">
+                    <div class="pt-[2px] flex-shrink-0">
+                      <span class="material-symbols-outlined text-[16px] sm:text-[18px]" :class="n.read ? 'text-slate-500' : 'text-emerald-400'">notifications</span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-start justify-between gap-2 mb-0.5">
+                        <div class="font-medium text-[11px] sm:text-xs flex-1 min-w-0" :class="n.read ? 'text-slate-200' : 'text-emerald-100'">{{ n.title }}</div>
+                        <div class="text-[9px] sm:text-[10px] text-slate-500 flex-shrink-0">{{ formatDate(n.date) }}</div>
+                      </div>
+                      <div class="text-slate-300 mb-1.5 sm:mb-1 text-[11px] sm:text-xs">{{ n.body }}</div>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="px-1.5 py-0.5 rounded-full bg-slate-900/80 border border-slate-700 text-[9px] sm:text-[10px]">{{ n.audience }}</span>
+                        <button @click="openById(n.requestId)" class="inline-flex items-center gap-1 text-[10px] sm:text-[11px] text-emerald-300 hover:text-emerald-200 py-1">
+                          <span class="material-symbols-outlined text-[13px] sm:text-[14px]">open_in_new</span>
+                          Ouvrir
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-if="notifications.length === 0" class="text-slate-500 text-center py-8 text-[11px] sm:text-xs">Aucune notification pour le moment. Les validations et commentaires les feront apparaître ici.</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </transition>
+      </div>
+    </main>
+
+    <!-- PWA install banner (minimal) -->
+    <div v-if="pwa.installAvailable && !pwa.dismissed" class="pwa-banner fixed bottom-0 inset-x-0 z-30">
+      <div class="max-w-3xl mx-auto m-2 px-3 py-2.5 sm:py-2 rounded-xl bg-slate-900 border border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3 text-xs shadow-xl">
+        <div class="flex items-start gap-2 flex-1">
+          <span class="material-symbols-outlined text-emerald-400 text-lg sm:text-xl flex-shrink-0 mt-0.5 sm:mt-0">offline_pin</span>
+          <div class="min-w-0">
+            <div class="font-medium text-xs sm:text-sm mb-0.5">Installer PharmaFlow</div>
+            <div class="text-slate-400 text-[10px] sm:text-[11px] line-clamp-2">
+              <span class="hidden sm:inline">Accédez plus rapidement à l'outil et continuez à consulter l'historique même hors-ligne.</span>
+              <span class="sm:hidden">Accès rapide et mode hors-ligne disponible.</span>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 w-full sm:w-auto flex-shrink-0">
+          <button @click="pwa.dismissed = true" class="flex-1 sm:flex-initial px-3 py-1.5 sm:py-1 rounded-lg border border-slate-700 text-[10px] sm:text-[11px] hover:bg-slate-800">Plus tard</button>
+          <button @click="installPWA" class="flex-1 sm:flex-initial px-3 py-1.5 sm:py-1 rounded-lg bg-emerald-500 text-slate-950 text-[10px] sm:text-[11px] font-semibold hover:bg-emerald-400 whitespace-nowrap">Installer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Material Icons (outline) -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" />
+
+  <script>
+    const { createApp, reactive, computed, onMounted } = Vue;
+
+    createApp({
+      setup() {
+        const pharmacies = [
+          { id: 'pharma-central', name: 'Pharmacie Centrale', managers: ['Dr. Lefèvre', 'Dr. Diallo'] },
+          { id: 'pharma-nord', name: 'Pharmacie Nord', managers: ['Dr. Martin', "Dr. Oumar"] },
+        ];
+
+        const mockRequests = reactive([
+          {
+            id: 'req-001',
+            reference: 'REQ-2025-001',
+            pharmacyId: 'pharma-central',
+            medicineName: 'Amoxicilline',
+            presentation: '500 mg - boîte de 24',
+            quantity: 40,
+            unit: 'boites',
+            justification: 'Reconstitution des stocks après pic infectieux hivernal.',
+            priority: 'standard',
+            status: 'pending',
+            channel: 'portal',
+            flowType: 'request',
+            internalNotes: '',
+            createdAt: Date.now() - 1000 * 60 * 60 * 20,
+            updatedAt: Date.now() - 1000 * 60 * 60 * 2,
+          },
+          {
+            id: 'req-002',
+            reference: 'REQ-2025-002',
+            pharmacyId: 'pharma-central',
+            medicineName: 'Insuline glargine',
+            presentation: 'Stylo prérempli 3 ml',
+            quantity: 120,
+            unit: 'unités',
+            justification: 'Renforcement du stock pour patients diabétiques en suivi.',
+            priority: 'haute',
+            status: 'approved',
+            channel: 'email',
+            flowType: 'request',
+            internalNotes: 'Validation prioritaire par le Dr. Lefèvre.',
+            createdAt: Date.now() - 1000 * 60 * 60 * 48,
+            updatedAt: Date.now() - 1000 * 60 * 60 * 6,
+          },
+          {
+            id: 'req-003',
+            reference: 'DON-2025-003',
+            pharmacyId: 'pharma-nord',
+            medicineName: 'Solution hydroalcoolique',
+            presentation: 'Flacon 500 ml',
+            quantity: 60,
+            unit: 'flacons',
+            justification: "Don aux structures de soins primaires locales.",
+            priority: 'standard',
+            status: 'approved',
+            channel: 'portal',
+            flowType: 'donation',
+            internalNotes: 'Planifier la logistique de transport.',
+            createdAt: Date.now() - 1000 * 60 * 60 * 96,
+            updatedAt: Date.now() - 1000 * 60 * 60 * 12,
+          },
+          {
+            id: 'req-004',
+            reference: 'REQ-2025-004',
+            pharmacyId: 'pharma-central',
+            medicineName: 'Morphine injectable',
+            presentation: 'Ampoules 10 mg',
+            quantity: 15,
+            unit: 'boites',
+            justification: 'Couverture des besoins en soins palliatifs.',
+            priority: 'critique',
+            status: 'rejected',
+            channel: 'phone',
+            flowType: 'request',
+            internalNotes: 'À re-présenter avec justification détaillée.',
+            createdAt: Date.now() - 1000 * 60 * 60 * 72,
+            updatedAt: Date.now() - 1000 * 60 * 60 * 30,
+          },
+        ]);
+
+        const notifications = reactive([
+          {
+            id: 'not-001',
+            title: 'Nouvelle demande à valider',
+            body: 'REQ-2025-001 - Amoxicilline - 40 boîtes.',
+            date: Date.now() - 1000 * 60 * 40,
+            read: false,
+            audience: 'Managers - Pharmacie Centrale',
+            requestId: 'req-001',
+          },
+          {
+            id: 'not-002',
+            title: 'Demande validée',
+            body: 'Insuline glargine - la demande a été validée par les deux responsables.',
+            date: Date.now() - 1000 * 60 * 60 * 5,
+            read: true,
+            audience: 'Pharmacie Centrale',
+            requestId: 'req-002',
+          },
+        ]);
+
+        const state = reactive({
+          currentView: 'dashboard',
+          currentPharmacyId: pharmacies[0]?.id,
+          editingRequest: null,
+        });
+
+        const formDefaults = {
+          medicineName: '',
+          presentation: '',
+          quantity: 1,
+          unit: 'boites',
+          justification: '',
+          priority: 'standard',
+          channel: 'portal',
+          flowType: 'request',
+          internalNotes: '',
+        };
+
+        const form = reactive({ ...formDefaults });
+
+        const filters = reactive({
+          status: 'all',
+          historyRange: '90',
+        });
+
+        const pwa = reactive({
+          installEvent: null,
+          installAvailable: false,
+          dismissed: false,
+          online: navigator.onLine,
+        });
+
+        const navItems = [
+          { id: 'dashboard', label: 'Tableau de bord', icon: 'dashboard' },
+          { id: 'request', label: 'Nouvelle demande', icon: 'prescriptions' },
+          { id: 'history', label: 'Historique', icon: 'timeline' },
+          { id: 'notifications', label: 'Notifications', icon: 'notifications' },
+        ];
+
+        const currentPharmacy = computed(() => pharmacies.find(p => p.id === state.currentPharmacyId));
+
+        const filteredRequests = computed(() => {
+          return mockRequests
+            .filter(r => r.pharmacyId === state.currentPharmacyId)
+            .sort((a, b) => b.updatedAt - a.updatedAt);
+        });
+
+        const filteredRecentRequests = computed(() => {
+          let list = filteredRequests.value;
+          if (filters.status !== 'all') {
+            list = list.filter(r => r.status === filters.status);
+          }
+          return list.slice(0, 6);
+        });
+
+        const stats = computed(() => {
+          const list = filteredRequests.value;
+          return {
+            pending: list.filter(r => r.status === 'pending').length,
+            approved: list.filter(r => r.status === 'approved').length,
+            rejected: list.filter(r => r.status === 'rejected').length,
+          };
+        });
+
+        const unreadCount = computed(() => notifications.filter(n => !n.read).length);
+
+        const timeline = computed(() => {
+          const range = filters.historyRange;
+          const now = Date.now();
+          const daysToMs = (d) => d === 'all' ? Infinity : parseInt(d, 10) * 24 * 60 * 60 * 1000;
+          const maxAge = daysToMs(range);
+
+          const events = mockRequests
+            .filter(r => r.pharmacyId === state.currentPharmacyId)
+            .flatMap(r => {
+              return [
+                {
+                  id: `${r.id}-created`,
+                  requestId: r.id,
+                  title: `${r.medicineName} - demande créée`,
+                  subtitle: r.justification,
+                  date: r.createdAt,
+                  type: r.flowType === 'donation' ? 'donation-created' : 'request-created',
+                  status: r.status,
+                },
+                {
+                  id: `${r.id}-updated`,
+                  requestId: r.id,
+                  title: `${r.medicineName} - dernière mise à jour`,
+                  subtitle: `Statut actuel : ${formatStatus(r.status)}`,
+                  date: r.updatedAt,
+                  type: 'status-updated',
+                  status: r.status,
+                },
+              ];
+            })
+            .filter(e => (now - e.date) <= maxAge)
+            .sort((a, b) => b.date - a.date);
+          return events;
+        });
+
+        const timelinePreview = computed(() => timeline.value.slice(0, 4));
+
+        function statusPillClass(status) {
+          const base = 'px-2 py-0.5 rounded-full text-[10px] border';
+          switch (status) {
+            case 'approved':
+              return `${base} bg-emerald-500/10 border-emerald-500/60 text-emerald-200`;
+            case 'rejected':
+              return `${base} bg-rose-500/10 border-rose-500/60 text-rose-200`;
+            case 'pending':
+            default:
+              return `${base} bg-amber-500/10 border-amber-500/60 text-amber-200`;
+          }
+        }
+
+        function timelineDotClass(type) {
+          if (type === 'donation-created') return 'bg-sky-400';
+          if (type === 'status-updated') return 'bg-emerald-400';
+          return 'bg-amber-400';
+        }
+
+        function formatStatus(status) {
+          switch (status) {
+            case 'approved': return 'Validée';
+            case 'rejected': return 'Refusée';
+            case 'pending':
+            default: return 'En attente';
+          }
+        }
+
+        function formatChannel(channel) {
+          switch (channel) {
+            case 'portal': return 'Portail interne';
+            case 'email': return 'Email';
+            case 'phone': return 'Téléphone';
+            default: return channel;
+          }
+        }
+
+        function formatTimelineType(type) {
+          switch (type) {
+            case 'donation-created': return 'Don enregistré';
+            case 'request-created': return 'Demande enregistrée';
+            case 'status-updated': return 'Statut mis à jour';
+            default: return type;
+          }
+        }
+
+        function formatDate(timestamp) {
+          const d = new Date(timestamp);
+          return d.toLocaleString('fr-FR', {
+            day: '2-digit', month: '2-digit', year: '2-digit',
+            hour: '2-digit', minute: '2-digit',
+          });
+        }
+
+        function timeAgo(timestamp) {
+          const diff = Date.now() - timestamp;
+          const minutes = Math.round(diff / 60000);
+          if (minutes < 1) return "À l'instant";
+          if (minutes < 60) return `Il y a ${minutes} min`;
+          const hours = Math.round(minutes / 60);
+          if (hours < 24) return `Il y a ${hours} h`;
+          const days = Math.round(hours / 24);
+          return `Il y a ${days} j`;
+        }
+
+        function resetForm() {
+          Object.assign(form, formDefaults);
+          state.editingRequest = null;
+        }
+
+        function goToNewRequest() {
+          state.currentView = 'request';
+          resetForm();
+        }
+
+        function goBack() {
+          state.currentView = 'dashboard';
+          resetForm();
+        }
+
+        function openForEdit(request) {
+          state.currentView = 'request';
+          state.editingRequest = request.id;
+          Object.assign(form, {
+            medicineName: request.medicineName,
+            presentation: request.presentation,
+            quantity: request.quantity,
+            unit: request.unit,
+            justification: request.justification,
+            priority: request.priority,
+            channel: request.channel,
+            flowType: request.flowType,
+            internalNotes: request.internalNotes,
+          });
+        }
+
+        function openById(id) {
+          const req = mockRequests.find(r => r.id === id);
+          if (!req) return;
+          if (req.pharmacyId !== state.currentPharmacyId) {
+            state.currentPharmacyId = req.pharmacyId;
+          }
+          openForEdit(req);
+        }
+
+        function submitRequest() {
+          if (!currentPharmacy.value) {
+            alert('Veuillez sélectionner une pharmacie.');
+            return;
+          }
+
+          const now = Date.now();
+
+          if (state.editingRequest) {
+            const existing = mockRequests.find(r => r.id === state.editingRequest);
+            if (!existing) return;
+
+            existing.medicineName = form.medicineName;
+            existing.presentation = form.presentation;
+            existing.quantity = form.quantity;
+            existing.unit = form.unit;
+            existing.justification = form.justification;
+            existing.priority = form.priority;
+            existing.channel = form.channel;
+            existing.flowType = form.flowType;
+            existing.internalNotes = form.internalNotes;
+            existing.updatedAt = now;
+
+            notifications.unshift({
+              id: `not-${Date.now()}`,
+              title: 'Demande mise à jour',
+              body: `${existing.reference} - Mise à jour envoyée aux responsables.`,
+              date: now,
+              read: false,
+              audience: `Managers - ${currentPharmacy.value.name}`,
+              requestId: existing.id,
+            });
+          } else {
+            const id = 'req-' + String(mockRequests.length + 1).padStart(3, '0');
+            const reference = (form.flowType === 'donation' ? 'DON' : 'REQ') + '-2025-' + String(mockRequests.length + 1).padStart(3, '0');
+
+            const newRequest = {
+              id,
+              reference,
+              pharmacyId: state.currentPharmacyId,
+              medicineName: form.medicineName,
+              presentation: form.presentation,
+              quantity: form.quantity,
+              unit: form.unit,
+              justification: form.justification,
+              priority: form.priority,
+              status: 'pending',
+              channel: form.channel,
+              flowType: form.flowType,
+              internalNotes: form.internalNotes,
+              createdAt: now,
+              updatedAt: now,
+            };
+
+            mockRequests.unshift(newRequest);
+
+            notifications.unshift({
+              id: `not-${Date.now()}`,
+              title: 'Nouvelle demande à valider',
+              body: `${reference} - ${newRequest.medicineName} - ${newRequest.quantity} ${newRequest.unit}.`,
+              date: now,
+              read: false,
+              audience: `Managers - ${currentPharmacy.value.name}`,
+              requestId: id,
+            });
+          }
+
+          state.currentView = 'dashboard';
+          resetForm();
+        }
+
+        function markAllRead() {
+          notifications.forEach(n => { n.read = true; });
+        }
+
+        function installPWA() {
+          if (!pwa.installEvent) return;
+          pwa.installEvent.prompt();
+          pwa.installEvent.userChoice.finally(() => {
+            pwa.dismissed = true;
+            pwa.installEvent = null;
+            pwa.installAvailable = false;
+          });
+        }
+
+        function setupPWA() {
+          if ('serviceWorker' in navigator) {
+            const swCode = `
+              const CACHE_NAME = 'pharmaflow-cache-v1';
+              const OFFLINE_URLS = ['/', '/index.html'];
+              self.addEventListener('install', (event) => {
+                event.waitUntil(
+                  caches.open(CACHE_NAME).then((cache) => cache.addAll(OFFLINE_URLS))
+                );
+                self.skipWaiting();
+              });
+              self.addEventListener('activate', (event) => {
+                event.waitUntil(
+                  caches.keys().then((keys) =>
+                    Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+                  )
+                );
+                self.clients.claim();
+              });
+              self.addEventListener('fetch', (event) => {
+                if (event.request.method !== 'GET') return;
+                event.respondWith(
+                  caches.match(event.request).then((cached) =>
+                    cached || fetch(event.request).catch(() => caches.match('/index.html'))
+                  )
+                );
+              });
+            `;
+
+            const blob = new Blob([swCode], { type: 'text/javascript' });
+            const swUrl = URL.createObjectURL(blob);
+            navigator.serviceWorker.register(swUrl).catch(console.error);
+          }
+
+          const manifest = {
+            name: 'PharmaFlow',
+            short_name: 'PharmaFlow',
+            start_url: '.',
+            display: 'standalone',
+            background_color: '#020617',
+            theme_color: '#10b981',
+            icons: [],
+          };
+
+          const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+          const manifestUrl = URL.createObjectURL(blob);
+          const link = document.createElement('link');
+          link.rel = 'manifest';
+          link.href = manifestUrl;
+          document.head.appendChild(link);
+
+          window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            pwa.installEvent = e;
+            pwa.installAvailable = true;
+          });
+
+          window.addEventListener('online', () => { pwa.online = true; });
+          window.addEventListener('offline', () => { pwa.online = false; });
+        }
+
+        onMounted(() => {
+          setupPWA();
+        });
+
+        return {
+          pharmacies,
+          notifications,
+          navItems,
+          state,
+          form,
+          filters,
+          pwa,
+          currentPharmacy,
+          filteredRecentRequests,
+          stats,
+          timeline,
+          timelinePreview,
+          unreadCount,
+          statusPillClass,
+          timelineDotClass,
+          formatStatus,
+          formatChannel,
+          formatTimelineType,
+          formatDate,
+          timeAgo,
+          resetForm,
+          goToNewRequest,
+          goBack,
+          openForEdit,
+          openById,
+          submitRequest,
+          markAllRead,
+          installPWA,
+        };
+      },
+    }).mount('#app');
+  </script>
+</body>
+</html>
